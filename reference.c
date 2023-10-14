@@ -35,8 +35,7 @@ uint32_t mpc_main(struct MiniRV32IMAState state)
 	uint32_t rval = 0;
 	uint32_t trap = 0;
 
-	while (state.icount > 0) {
-		state.icount = 0;
+	//for (state.icount = 0; state.icount < 1; state.icount++) {
 		uint32_t ir = 0;
 		rval = 0;
 		uint32_t ofs_pc = pc - MINIRV32_RAM_IMAGE_OFFSET;
@@ -44,12 +43,12 @@ uint32_t mpc_main(struct MiniRV32IMAState state)
 		if( ofs_pc >= MINI_RV32_RAM_SIZE )
 		{
 			trap = 1 + 1;  // Handle access violation on instruction read.
-			break;
+			return trap;
 		}
 		else if( ofs_pc & 3 )
 		{
 			trap = 1 + 0;  //Handle PC-misaligned access
-			break;
+			return trap;
 		}
 		else
 		{
@@ -191,7 +190,7 @@ uint32_t mpc_main(struct MiniRV32IMAState state)
 			}
 			// If there was a trap, do NOT allow register writeback.
 			if( trap )
-				break;
+				return trap;
 
 			if( rdid )
 			{
@@ -200,10 +199,10 @@ uint32_t mpc_main(struct MiniRV32IMAState state)
 		}
 		if( trap )
 		{
-			return 1;
+			return trap;
 		}
 		SETCSR( pc, pc );
-	}
+//	}
 	return 0;
 }
 
