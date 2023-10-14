@@ -166,21 +166,7 @@ uint32_t mpc_main(struct MiniRV32IMAState state)
 
 					if( is_reg && ( ir & 0x02000000 ) )
 					{
-						switch( (ir>>12)&7 ) //0x02000000 = RV32M
-						{
-							case 0: rval = rs1 * rs2; break; // MUL
-#ifndef CUSTOM_MULH // If compiling on a system that doesn't natively, or via libgcc support 64-bit math.
-							case 1: rval = ((int64_t)((int32_t)rs1) * (int64_t)((int32_t)rs2)) >> 32; break; // MULH
-							case 2: rval = ((int64_t)((int32_t)rs1) * (uint64_t)rs2) >> 32; break; // MULHSU
-							case 3: rval = ((uint64_t)rs1 * (uint64_t)rs2) >> 32; break; // MULHU
-#else
-							CUSTOM_MULH
-#endif
-							case 4: if( rs2 == 0 ) rval = -1; else rval = ((int32_t)rs1 == INT32_MIN && (int32_t)rs2 == -1) ? rs1 : ((int32_t)rs1 / (int32_t)rs2); break; // DIV
-							case 5: if( rs2 == 0 ) rval = 0xffffffff; else rval = rs1 / rs2; break; // DIVU
-							case 6: if( rs2 == 0 ) rval = rs1; else rval = ((int32_t)rs1 == INT32_MIN && (int32_t)rs2 == -1) ? 0 : ((uint32_t)((int32_t)rs1 % (int32_t)rs2)); break; // REM
-							case 7: if( rs2 == 0 ) rval = rs1; else rval = rs1 % rs2; break; // REMU
-						}
+                                                trap = (2+1);
 					}
 					else
 					{
