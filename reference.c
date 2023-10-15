@@ -3,44 +3,50 @@
 #include <inttypes.h>
 
 
-	#define MINIRV32_STORE4( ofs, val ) *(uint32_t*)(state.memory + ofs) = val
-	#define MINIRV32_STORE2( ofs, val ) *(uint16_t*)(state.memory + ofs) = val
-	#define MINIRV32_STORE1( ofs, val ) *(uint8_t*)(state.memory + ofs) = val
-	#define MINIRV32_LOAD4( ofs ) *(uint32_t*)(state.memory + ofs)
-	#define MINIRV32_LOAD2( ofs ) *(uint16_t*)(state.memory + ofs)
-	#define MINIRV32_LOAD1( ofs ) *(uint8_t*)(state.memory + ofs)
-	#define MINIRV32_LOAD2_SIGNED( ofs ) *(int16_t*)(state.memory + ofs)
-	#define MINIRV32_LOAD1_SIGNED( ofs ) *(int8_t*)(state.memory + ofs)
+	#define MINIRV32_STORE4( ofs, val ) *(uint32_t*)(live_memory + ofs) = val
+	#define MINIRV32_STORE2( ofs, val ) *(uint16_t*)(live_memory + ofs) = val
+	#define MINIRV32_STORE1( ofs, val ) *(uint8_t*)(live_memory + ofs) = val
+	#define MINIRV32_LOAD4( ofs ) *(uint32_t*)(live_memory + ofs)
+	#define MINIRV32_LOAD2( ofs ) *(uint16_t*)(live_memory + ofs)
+	#define MINIRV32_LOAD1( ofs ) *(uint8_t*)(live_memory + ofs)
+	#define MINIRV32_LOAD2_SIGNED( ofs ) *(int16_t*)(live_memory + ofs)
+	#define MINIRV32_LOAD1_SIGNED( ofs ) *(int8_t*)(live_memory + ofs)
 
-#define CSR( x ) state.x
-#define SETCSR( x, val ) { state.x = val; }
-#define REG( x ) state.regs[x]
-#define REGSET( x, val ) { state.regs[x] = val; }
+#define CSR( x ) x
+#define SETCSR( x, val ) { x = val; }
+#define REG( x ) regs[x]
+#define REGSET( x, val ) { regs[x] = val; }
 
 #define MINI_RV32_RAM_SIZE 1024
-#define MINIRV32_RAM_IMAGE_OFFSET 0x100
+
 struct MiniRV32IMAState
 {
-	uint32_t regs[32];
-
-	uint32_t pc;
-		
-	uint8_t merkle[32][16];
-	uint8_t memory[1024];
-	uint8_t icount;
+	uint8_t memory_in[MINI_RV32_RAM_SIZE];
+	uint8_t claimed_memory_out[MINI_RV32_RAM_SIZE];
 };
-
 
 uint32_t mpc_main(struct MiniRV32IMAState state)
 {
-	int32_t pc = CSR( pc );
+	uint32_t regs[32];
+	uint32_t pc = 0;
 	uint32_t rval = 0;
 	uint32_t trap = 0;
-
+	
+	uint8_t live_memory[MINI_RV32_RAM_SIZE];
+	
+	for (int i = 0; i < MINI_RV32_RAM_SIZE; i++) {
+		live_memory[i] = state.memory_in[i];
+	}
+	
+	for (int i = 0; i < 32; i++) {
+	    regs[i] = MINIRV32_LOAD4(i * 4);
+	}
+	pc = MINIRV32_LOAD4(32 * 4);
+		
 	//for (state.icount = 0; state.icount < 1; state.icount++) {
 		uint32_t ir = 0;
 		rval = 0;
-		uint32_t ofs_pc = pc - MINIRV32_RAM_IMAGE_OFFSET;
+		uint32_t ofs_pc = pc;
 	
 		if( ofs_pc >= MINI_RV32_RAM_SIZE )
 		{
@@ -108,7 +114,6 @@ uint32_t mpc_main(struct MiniRV32IMAState state)
 					int32_t imm_se = imm | (( imm & 0x800 )?0xfffff000:0);
 					uint32_t rsval = rs1 + imm_se;
 
-					rsval -= MINIRV32_RAM_IMAGE_OFFSET;
 					if( rsval >= MINI_RV32_RAM_SIZE-3 )
 					{
 					    trap = (5+1);
@@ -135,7 +140,7 @@ uint32_t mpc_main(struct MiniRV32IMAState state)
 					uint32_t rs2 = REG((ir >> 20) & 0x1f);
 					uint32_t addy = ( ( ir >> 7 ) & 0x1f ) | ( ( ir & 0xfe000000 ) >> 20 );
 					if( addy & 0x800 ) addy |= 0xfffff000;
-					addy += rs1 - MINIRV32_RAM_IMAGE_OFFSET;
+					addy += rs1;
 					rdid = 0;
 
 					if( addy >= MINI_RV32_RAM_SIZE-3 )
@@ -203,8 +208,21 @@ uint32_t mpc_main(struct MiniRV32IMAState state)
 		{
 			return trap;
 		}
-		SETCSR( pc, pc );
 //	}
+	for (int i = 0; i < 32; i++) {
+	    MINIRV32_STORE4(i * 4, regs[i]);
+	}
+	MINIRV32_STORE4(32 * 4, pc);
+	for (int i = 0; i < MINI_RV32_RAM_SIZE; i++) {
+	    if (state.claimed_memory_out[i] != live_memory[i]) {
+	    	return 1;
+	    }
+	}
 	return 0;
 }
 
+int main() {
+   struct MiniRV32IMAState state;
+   bzero(&state, sizeof(state));
+   return mpc_main(state);
+}
