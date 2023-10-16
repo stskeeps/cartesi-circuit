@@ -18,6 +18,7 @@
 // NOLINTBEGIN(google-readability-casting, misc-const-correctness)
 #include <stdint.h>
 #include <stddef.h>
+#include <assert.h>
 
 typedef int8_t int8;
 typedef uint8_t uint8;
@@ -29,15 +30,17 @@ typedef int64_t int64;
 typedef uint64_t uint64;
 typedef uint8_t bool;
 
-#define MAX_MEMORY_SIZE 128
+#define UCYCLE 0x320
+#define UHALT 0x328
+#define UPC 0x330
+#define UX0 0x340
+
 
 struct UarchState {
-    uint8 memory[MAX_MEMORY_SIZE];        
-    uint8 claimed_final[MAX_MEMORY_SIZE];
-    uint64 cycle;
-    uint64 pc;
-    uint64 regs[32];
-    uint8 halt;
+    uint64 access_paddr[16];
+    uint64 access_val[16];
+    uint8 access_readWriteEnd[16];
+    uint8 access_pointer;
     uint8 trap;
 };
 
@@ -51,43 +54,65 @@ enum UArchStepStatus {
 
 
 static inline uint64 readWord(UarchState *a, uint64 paddr) {
-    return *(uint64*)(a->memory + paddr);
+    if (a->access_pointer > 16) {
+       a->trap = 1;
+       return 0;
+    }
+    if (a->access_readWriteEnd[a->access_pointer] == 0 && a->access_paddr[a->access_pointer] == paddr) {
+       return (a->access_val[a->access_pointer++]);
+    } else {
+       a->access_pointer++;
+       a->trap = 1;
+       
+       return 0;
+    }
 }
 
 static inline void writeWord(UarchState *a, uint64 paddr, uint64 val) {
-    *(uint64*)(a->memory + paddr) = val;
+    if (a->access_pointer > 16) {
+       a->trap = 1;
+       return;
+    }
+    if (a->access_readWriteEnd[a->access_pointer] == 1 && a->access_paddr[a->access_pointer] == paddr && a->access_val[a->access_pointer] == val) {
+      a->access_pointer++;
+    } else {
+      a->access_pointer++;
+      a->trap = 1;
+    }
 }
 
 static inline uint64 readCycle(UarchState *a) {
-    return a->cycle;
+    return readWord(a, UCYCLE);
 }
 
 static inline void writeCycle(UarchState *a, uint64 val) {
-    a->cycle = val;
+    writeWord(a, UCYCLE, val);
 }
 
 static inline bool readHaltFlag(UarchState *a) {
-    return a->halt;
+    return readWord(a, UHALT) != 0;
 }
 
 static inline void setHaltFlag(UarchState *a) {
-    a->halt = 1;
+    writeWord(a, UHALT, 1);
 }
 
 static inline uint64 readPc(UarchState *a) {
-    return a->pc;
+    return readWord(a, UPC);
 }
 
 static inline void writePc(UarchState *a, uint64 val) {
-    a->pc = val;
+    writeWord(a, UPC, val);
 }
 
 static inline uint64 readX(UarchState *a, uint8 reg) {
-    return a->regs[reg];
+    __CPROVER_assume(reg < 32);
+    return readWord(a, UX0 + (reg << 3));
 }
 
 static inline void writeX(UarchState *a, uint8 reg, uint64 val) {
-    a->regs[reg] = val;
+    __CPROVER_assume(reg < 32);
+    writeWord(a, UX0 + (reg << 3), val);
 }
 
 
@@ -157,7 +182,6 @@ static inline int32 int32AddInt32(int32 v, int32 w) {
 }
 
 static inline int32 int32SubInt32(int32 v, int32 w) {
-    int32 res = 0;
     return v-w;
 }
 
@@ -1086,7 +1110,7 @@ static inline void executeInsn(UarchState *a, uint32 insn, uint64 pc) {
     } else if (insnMatchOpcodeFunct3Funct7(insn, 0x33, 0x4, 0x0)) {
         return executeXOR(a, insn, pc);
     } else if (insnMatchOpcodeFunct3(insn, 0x23, 0x2)) {
-        return executeSW(a, insn, pc);
+       return executeSW(a, insn, pc);
     } else if (insnMatchOpcodeFunct3Funct7(insn, 0x33, 0x1, 0x0)) {
         return executeSLL(a, insn, pc);
     } else if (insnMatchOpcodeFunct3(insn, 0x63, 0x4)) {
@@ -1153,12 +1177,39 @@ enum UArchStepStatus uarch_step(UarchState *a) {
 }
 
 
-int mpc_main(UarchState input) {
-   enum UArchStepStatus ret = uarch_step(&input);
-   for (int i = 0; i < MAX_MEMORY_SIZE; i++) {
-    if (input.memory[i] != input.claimed_final[i]) { 
-       return 1;
-    }
+struct Input {
+    uint64 access_paddr[16];
+    uint64 access_val[16];
+    uint8 access_readWriteEnd[16];
+};
+
+typedef struct Input Input;
+
+_Bool mpc_main(Input input) {
+   UarchState state;
+   state.access_pointer = 0;
+   state.trap = 0;
+   for (int i = 0; i < 16; i++) {
+      state.access_paddr[i] = input.access_paddr[i];
+      state.access_val[i] = input.access_val[i];
+      state.access_readWriteEnd[i] = input.access_readWriteEnd[i];
    }
-   return ret == Success;;
+   enum UArchStepStatus ret = uarch_step(&state);
+   _Bool retval = 0;
+   if (ret != Success) {
+     retval = 1;
+   }
+   if (state.access_pointer > 16) {
+     retval = 1;
+   } else if (state.access_pointer < 16 && (state.access_readWriteEnd[state.access_pointer] != 2 || state.trap > 0)) {
+     retval = 0;
+   }
+   return retval;
+}
+
+
+int main() {
+   Input input;   
+   bzero(&input, sizeof(input));
+   return mpc_main(input);
 }
