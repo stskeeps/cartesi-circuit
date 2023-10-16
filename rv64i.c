@@ -1,4 +1,3 @@
-
 // Copyright Cartesi and individual authors (see AUTHORS)
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
@@ -55,14 +54,14 @@ enum UArchStepStatus {
 
 static inline uint64 readWord(UarchState *a, uint64 paddr) {
     if (a->access_pointer > 16) {
-       a->trap = 1;
+       a->trap = 18;
        return 0;
     }
     if (a->access_readWriteEnd[a->access_pointer] == 0 && a->access_paddr[a->access_pointer] == paddr) {
        return (a->access_val[a->access_pointer++]);
     } else {
        a->access_pointer++;
-       a->trap = 1;
+       a->trap = 19;
        
        return 0;
     }
@@ -70,14 +69,14 @@ static inline uint64 readWord(UarchState *a, uint64 paddr) {
 
 static inline void writeWord(UarchState *a, uint64 paddr, uint64 val) {
     if (a->access_pointer > 16) {
-       a->trap = 1;
+       a->trap = 20;
        return;
     }
     if (a->access_readWriteEnd[a->access_pointer] == 1 && a->access_paddr[a->access_pointer] == paddr && a->access_val[a->access_pointer] == val) {
       a->access_pointer++;
     } else {
       a->access_pointer++;
-      a->trap = 1;
+      a->trap = 21;
     }
 }
 
@@ -1152,7 +1151,7 @@ static inline void executeInsn(UarchState *a, uint32 insn, uint64 pc) {
     } else if (insnMatchOpcodeFunct3(insn, 0xf, 0x0)) {
         return executeFENCE(a, insn, pc);
     }
-    a->trap = 1;    
+    a->trap = 253;    
 //    throw std::runtime_error("illegal instruction");
 }
 
@@ -1185,7 +1184,7 @@ struct Input {
 
 typedef struct Input Input;
 
-_Bool mpc_main(Input input) {
+int mpc_main(Input input) {
    UarchState state;
    state.access_pointer = 0;
    state.trap = 0;
@@ -1195,13 +1194,16 @@ _Bool mpc_main(Input input) {
       state.access_readWriteEnd[i] = input.access_readWriteEnd[i];
    }
    enum UArchStepStatus ret = uarch_step(&state);
-   _Bool retval = 0;
-   if (ret != Success) {
+   int retval = 0;
+   if (state.trap > 0) {
+     retval = state.trap;
+   } else if (ret != Success) {
      retval = 1;
-   }
-   if (state.access_pointer > 16) {
-     retval = 1;
-   } else if (state.access_pointer < 16 && (state.access_readWriteEnd[state.access_pointer] != 2 || state.trap > 0)) {
+   } else if (state.access_pointer > 16) {
+     retval = 16;
+   } else if (state.access_readWriteEnd[state.access_pointer] != 2) {
+     retval = 17;
+   } else {
      retval = 0;
    }
    return retval;
@@ -1209,7 +1211,7 @@ _Bool mpc_main(Input input) {
 
 
 int main() {
-   Input input;   
-   bzero(&input, sizeof(input));
+   Input input;
+   bzero(&input);
    return mpc_main(input);
 }
