@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <assert.h>
+#include <string.h>
 
 typedef int8_t int8;
 typedef uint8_t uint8;
@@ -34,14 +35,34 @@ typedef uint8_t bool;
 #define UPC 0x330
 #define UX0 0x340
 
-
+#define ACCESS_LOG_MAX 20480
 struct UarchState {
     uint64 access_paddr[16];
     uint64 access_val[16];
     uint8 access_readWriteEnd[16];
     uint8 access_pointer;
+    uint8 access_log_pointer;
     uint8 trap;
 };
+
+//typedef uint8_t Siblings[32][61];
+
+
+typedef uint8 Precomb_material[64];
+typedef uint8 Precomb_hash[32];
+typedef Precomb_material PrecombSiblings_material[61];
+typedef Precomb_hash PrecombSiblings_hash[61];
+
+struct Input {
+    uint64 access_paddr[16];
+    uint64 access_val[16];
+    uint8 access_readWriteEnd[16];
+    PrecombSiblings_material access_precombSiblings_material[16];
+    PrecombSiblings_hash access_precombSiblings_hash[16];
+    uint8 root_hash[32];
+};
+
+typedef struct Input Input;
 
 typedef struct UarchState UarchState;
 
@@ -51,6 +72,48 @@ enum UArchStepStatus {
     UArchHalted    // already at fixed point: microarchitecture is halted
 };
 
+#define COMPARE_BYTES32(a, b) \
+     a[0] == b[0] && \
+     a[1] == b[1] && \
+     a[2] == b[2] && \
+     a[3] == b[3] && \
+     a[4] == b[4] && \
+     a[5] == b[5] && \
+     a[6] == b[6] && \
+     a[7] == b[7] && \
+     a[8] == b[8] && \
+     a[9] == b[9] && \
+     a[10] == b[10] && \
+     a[11] == b[11] && \
+     a[12] == b[12] && \
+     a[13] == b[13] && \
+     a[14] == b[14] && \
+     a[15] == b[15] && \
+     a[16] == b[16] && \
+     a[17] == b[17] && \
+     a[18] == b[18] && \
+     a[19] == b[19] && \
+     a[20] == b[20] && \
+     a[21] == b[21] && \
+     a[22] == b[22] && \
+     a[23] == b[23] && \
+     a[24] == b[24] && \
+     a[25] == b[25] && \
+     a[26] == b[26] && \
+     a[27] == b[27] && \
+     a[28] == b[28] && \
+     a[29] == b[29] && \
+     a[30] == b[30] && \
+     a[31] == b[31]
+
+#include "keccak256-c.c"
+
+void require(UarchState *a, bool condition, const char *message) {
+    if (!condition) {
+      a->trap = 1;
+    }
+    //assert((condition) && (message));
+}
 
 static inline uint64 readWord(UarchState *a, uint64 paddr) {
     if (a->access_pointer > 16) {
@@ -115,12 +178,6 @@ static inline void writeX(UarchState *a, uint8 reg, uint64 val) {
 }
 
 
-void require(UarchState *a, bool condition, const char *message) {
-    if (!condition) {
-      a->trap = 1;
-    }
-    //assert((condition) && (message));
-}
 
 static void dumpInsn(UarchState *a, uint64 pc, uint32 insn, const char *name) {
 }
@@ -1176,24 +1233,59 @@ enum UArchStepStatus uarch_step(UarchState *a) {
 }
 
 
-struct Input {
-    uint64 access_paddr[16];
-    uint64 access_val[16];
-    uint8 access_readWriteEnd[16];
-};
-
-typedef struct Input Input;
 
 int mpc_main(Input input) {
    UarchState state;
    state.access_pointer = 0;
+   state.access_log_pointer = 0;
    state.trap = 0;
+
    for (int i = 0; i < 16; i++) {
+     for (int j = 0; j < 61; j++) {
+        if (!(Keccak256_64(input.access_precombSiblings_material[i][j], input.access_precombSiblings_hash[i][j]))) {
+           state.trap = 1;
+        }
+     }
+   }
+   /*
+      if (input.access_readWriteEnd[i] == 0) {
+         
+         
+         
+         // simulate a read using access log
+         
+         
+         uint64 read = readWord_LOG(&input, &state, state.access_paddr[i]);
+         if (state.trap != 0) {
+            break;
+         }
+         if (read != input.access_val[i]) {
+            state.trap = 42;
+         }
+      } else if (input.access_readWriteEnd[i] == 1) {
+         // simulate a write using access log
+      } else {
+         break;
+      }
+
+      if (state.trap != 0) {
+         break;
+      }
+   } */
+   if (state.trap) {
+      return state.trap;
+   }
+
+/*   for (int i = 0; i < 16; i++) {
       state.access_paddr[i] = input.access_paddr[i];
       state.access_val[i] = input.access_val[i];
       state.access_readWriteEnd[i] = input.access_readWriteEnd[i];
    }
-   enum UArchStepStatus ret = uarch_step(&state);
+ 
+   
+ 
+ //  enum UArchStepStatus ret = uarch_step(&state);
+   int ret = 0;
    int retval = 0;
    if (state.trap > 0) {
      retval = state.trap;
@@ -1205,13 +1297,13 @@ int mpc_main(Input input) {
      retval = 17;
    } else {
      retval = 0;
-   }
-   return retval;
+   } */
+   return 0;
 }
 
 
 int main() {
    Input input;
-   bzero(&input);
+   bzero(&input, sizeof(input));
    return mpc_main(input);
 }
