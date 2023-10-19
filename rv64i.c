@@ -18,7 +18,6 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <assert.h>
-#include <string.h>
 
 typedef int8_t int8;
 typedef uint8_t uint8;
@@ -30,86 +29,91 @@ typedef int64_t int64;
 typedef uint64_t uint64;
 typedef uint8_t bool;
 
+#define UCYCLE 0x320
+#define UHALT 0x328
+#define UPC 0x330
+#define UX0 0x340
 
-//typedef uint8_t Siblings[32][61];
 
-#define MAX_REGS 32
-#define RAM_SIZE 131072
-/*
 struct UarchState {
-    uint64 cycle;
-    uint64 pc;
-    uint64 regs[32];
-    uint8 halt;
-    uint64 ram[RAM_SIZE / 8];
-    uint64 write_addr;
-    uint64 write_val;
+    uint64 access_paddr[16];
+    uint64 access_val[16];
+    uint8 access_readWriteEnd[16];
+    uint8 access_pointer;
     uint8 trap;
 };
-*/
-struct UarchState {
-    uint64 cycle;
-    uint64 pc;
-    uint64 regs[32];
-    uint64 ram[RAM_SIZE / 8];
-    
-    uint64 write_addr;
-    uint64 write_val;
-    
-    uint64 cycle_after;
-    uint64 pc_after;
-    uint64 regs_after[32];
-    uint64 write_addr_after;
-    uint64 write_val_after;
-    uint8 halt;
-    uint8 halt_after;
-    uint8 trap;
-};
-
-typedef struct Input Input;
 
 typedef struct UarchState UarchState;
 
 enum UArchStepStatus {
     Success,       // one micro instruction was executed successfully
     CycleOverflow, // already at fixed point: uarch cycle has reached its maximum value
-    UArchHalted,    // already at fixed point: microarchitecture is halted
-    Trap
+    UArchHalted    // already at fixed point: microarchitecture is halted
 };
 
-#define COMPARE_BYTES32(a, b) \
-     a[0] == b[0] && \
-     a[1] == b[1] && \
-     a[2] == b[2] && \
-     a[3] == b[3] && \
-     a[4] == b[4] && \
-     a[5] == b[5] && \
-     a[6] == b[6] && \
-     a[7] == b[7] && \
-     a[8] == b[8] && \
-     a[9] == b[9] && \
-     a[10] == b[10] && \
-     a[11] == b[11] && \
-     a[12] == b[12] && \
-     a[13] == b[13] && \
-     a[14] == b[14] && \
-     a[15] == b[15] && \
-     a[16] == b[16] && \
-     a[17] == b[17] && \
-     a[18] == b[18] && \
-     a[19] == b[19] && \
-     a[20] == b[20] && \
-     a[21] == b[21] && \
-     a[22] == b[22] && \
-     a[23] == b[23] && \
-     a[24] == b[24] && \
-     a[25] == b[25] && \
-     a[26] == b[26] && \
-     a[27] == b[27] && \
-     a[28] == b[28] && \
-     a[29] == b[29] && \
-     a[30] == b[30] && \
-     a[31] == b[31]
+
+static inline uint64 readWord(UarchState *a, uint64 paddr) {
+    if (a->access_pointer > 16) {
+       a->trap = 18;
+       return 0;
+    }
+    if (a->access_readWriteEnd[a->access_pointer] == 0 && a->access_paddr[a->access_pointer] == paddr) {
+       return (a->access_val[a->access_pointer++]);
+    } else {
+       a->access_pointer++;
+       a->trap = 19;
+       
+       return 0;
+    }
+}
+
+static inline void writeWord(UarchState *a, uint64 paddr, uint64 val) {
+    if (a->access_pointer > 16) {
+       a->trap = 20;
+       return;
+    }
+    if (a->access_readWriteEnd[a->access_pointer] == 1 && a->access_paddr[a->access_pointer] == paddr && a->access_val[a->access_pointer] == val) {
+      a->access_pointer++;
+    } else {
+      a->access_pointer++;
+      a->trap = 21;
+    }
+}
+
+static inline uint64 readCycle(UarchState *a) {
+    return readWord(a, UCYCLE);
+}
+
+static inline void writeCycle(UarchState *a, uint64 val) {
+    writeWord(a, UCYCLE, val);
+}
+
+static inline bool readHaltFlag(UarchState *a) {
+    return readWord(a, UHALT) != 0;
+}
+
+static inline void setHaltFlag(UarchState *a) {
+    writeWord(a, UHALT, 1);
+}
+
+static inline uint64 readPc(UarchState *a) {
+    return readWord(a, UPC);
+}
+
+static inline void writePc(UarchState *a, uint64 val) {
+    writeWord(a, UPC, val);
+}
+
+static inline uint64 readX(UarchState *a, uint8 reg) {
+    __CPROVER_assume(reg < 32);
+    return readWord(a, UX0 + (reg << 3));
+}
+
+static inline void writeX(UarchState *a, uint8 reg, uint64 val) {
+    __CPROVER_assume(reg < 32);
+    writeWord(a, UX0 + (reg << 3), val);
+}
+
 
 void require(UarchState *a, bool condition, const char *message) {
     if (!condition) {
@@ -117,68 +121,6 @@ void require(UarchState *a, bool condition, const char *message) {
     }
     //assert((condition) && (message));
 }
-
-#define UARCH_RAM_START (uint64)(0x70000000)
-#define UARCH_RAM_END (UARCH_RAM_START + RAM_SIZE)
-
-static inline uint64 readWord(UarchState *a, uint64 paddr) {
-    paddr -= UARCH_RAM_START;
-    if (paddr < RAM_SIZE) {
-       return a->ram[paddr / 8];
-    }
-    a->trap = 18;
-    return 0;
-}
-
-static inline void writeWord(UarchState *a, uint64 paddr, uint64 val) {
-    if (a->write_addr == 0) {
-      a->trap = 19; // we cannot have more than one writeout per step
-      return;
-    }
-    if (a->write_addr == 0x328 /* UHALT */) {
-       a->halt = val;
-       return;
-    }
-    a->write_addr = paddr;
-    a->write_val = val;
-    return;
-}
-
-static inline uint64 readCycle(UarchState *a) {
-    return a->cycle;
-}
-
-static inline void writeCycle(UarchState *a, uint64 val) {
-    a->cycle = val;
-}
-
-static inline bool readHaltFlag(UarchState *a) {
-    return a->halt != 0;
-}
-
-static inline void setHaltFlag(UarchState *a) {
-    a->halt = 1;
-}
-
-static inline uint64 readPc(UarchState *a) {
-    return a->pc;
-}
-
-static inline void writePc(UarchState *a, uint64 val) {
-    a->pc = val;
-}
-
-static inline uint64 readX(UarchState *a, uint8 reg) {
-    __CPROVER_assume(reg < 32);
-    return a->regs[reg];
-}
-
-static inline void writeX(UarchState *a, uint8 reg, uint64 val) {
-    __CPROVER_assume(reg < 32);
-    a->regs[reg] = val;
-}
-
-
 
 static void dumpInsn(UarchState *a, uint64 pc, uint32 insn, const char *name) {
 }
@@ -1234,71 +1176,28 @@ enum UArchStepStatus uarch_step(UarchState *a) {
 }
 
 
+struct Input {
+    uint64 access_paddr[16];
+    uint64 access_val[16];
+    uint8 access_readWriteEnd[16];
+};
 
-int mpc_main(UarchState state) {
-   state.write_addr = 0;
-   state.write_val = 0;
+typedef struct Input Input;
 
+int mpc_main(Input input) {
+   UarchState state;
+   state.access_pointer = 0;
    state.trap = 0;
-   int ret = uarch_step(&state);
-   if (ret != Success || state.trap > 0) {
-     return ret;
-   } else {
-    for (int i = 0; i < 32; i++) {
-      if (state.regs[i] != state.regs_after[i]) {
-         ret = 104;
-         break;
-       }
-    }
-    if (state.cycle != state.cycle_after) {
-        ret = 100;
-    } else if (state.pc != state.pc_after) {
-        ret = 101;
-    } else if (state.halt != state.halt_after) {
-        ret = 102;
-    } else if (state.write_addr != state.write_addr_after) {
-        ret = 103;
-    } else if (state.write_val != state.write_val_after) {
-        ret = 104;
-    }
-   }
-   return ret;
-/*      if (input.access_readWriteEnd[i] == 0) {
-         // simulate a read using access log
-
-         uint64 read = readWord_LOG(&input, &state, state.access_paddr[i]);
-         if (state.trap != 0) {
-            break;
-         }
-         if (read != input.access_val[i]) {
-            state.trap = 42;
-         }
-      } else if (input.access_readWriteEnd[i] == 1) {
-         // simulate a write using access log
-      } else {
-         break;
-      }
-
-      if (state.trap != 0) {
-         break;
-      }
-   } 
-   if (state.trap) {
-      return state.trap;
-   }
-
    for (int i = 0; i < 16; i++) {
       state.access_paddr[i] = input.access_paddr[i];
       state.access_val[i] = input.access_val[i];
       state.access_readWriteEnd[i] = input.access_readWriteEnd[i];
    }
- 
-   
- 
- //  enum UArchStepStatus ret = uarch_step(&state);
-   int ret = 0;
+   enum UArchStepStatus ret = uarch_step(&state);
    int retval = 0;
-   if (state.trap > 0) {
+   if (state.access_readWriteEnd[state.access_pointer] != 2) {
+     retval = 22;
+   } else if (state.trap > 0) {
      retval = state.trap;
    } else if (ret != Success) {
      retval = 1;
@@ -1308,6 +1207,13 @@ int mpc_main(UarchState state) {
      retval = 17;
    } else {
      retval = 0;
-   } */
+   }
+   return retval;
 }
 
+
+int main() {
+   Input input;
+   bzero(&input, sizeof(input));
+   return mpc_main(input);
+}

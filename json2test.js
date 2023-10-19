@@ -3,33 +3,7 @@ const process = require("process");
 
 const steps = JSON.parse(fs.readFileSync(process.argv[2])).steps;
 
-const siblingsLength = 61;
-for (var p = 0; p < steps.length; p++) {
-    let buf = Buffer.alloc(0);
-    let rawAccesses = steps[p].accesses;
-    let arrayLen = rawAccesses.length;
-    
-    for (let i = 0; i < arrayLen; i++) {
-        if (rawAccesses[i].type == "read") {
-            buf = Buffer.concat([buf, Buffer.from(rawAccesses[i].value, "hex")]);
-        }
-        buf = Buffer.concat([buf, Buffer.from(rawAccesses[i].proof.target_hash, "hex")]);
-        for (
-              let j = i * (siblingsLength + 1) + 1;
-              j < (i + 1) * (siblingsLength + 1);
-              j++
-            ) {
-            buf = Buffer.concat([buf, Buffer.from(rawAccesses[i].proof.sibling_hashes[
-                                siblingsLength - (j % (siblingsLength + 1))], "hex")]);
-        }
-        let finalBuf = Buffer.alloc(20480);
-        buf.copy(finalBuf);
-        let rootHash = Buffer.from(rawAccesses[i].proof.root_hash, "hex");
-        
-        console.log('input := { rootHash: ' + JSON.stringify(Array.from(rootHash)) + '; accessLog: ' + JSON.stringify(Array.from(finalBuf)) + '; };');
-        console.log('return_value == 0;');
-        console.log('---');
-    } /*
+for (var i = 0; i < steps.length; i++) {
     var access_paddr = Array(16).fill(0);
     var access_val = Array(16).fill(0);
     var access_readWriteEnd = Array(16).fill(0);
@@ -41,5 +15,5 @@ for (var p = 0; p < steps.length; p++) {
     access_readWriteEnd[steps[i].accesses.length] = 2;
     console.log('input := { access_paddr: ' + JSON.stringify(access_paddr) + '; access_val: ' + JSON.stringify(access_val).replaceAll('"', '') +'; access_readWriteEnd: ' + JSON.stringify(access_readWriteEnd) + '; };');
     console.log('return_value == 0;');
-    console.log('---');*/
+    console.log('---');
 }
