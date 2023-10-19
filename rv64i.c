@@ -1184,7 +1184,7 @@ struct Input {
 
 typedef struct Input Input;
 
-int mpc_main(Input input) {
+int rv64i(Input input) {
    UarchState state;
    state.access_pointer = 0;
    state.trap = 0;
@@ -1211,9 +1211,66 @@ int mpc_main(Input input) {
    return retval;
 }
 
+#define RAM_SIZE 8192
+#define PAGE_SIZE 4096
+#define RAM_START 0x70000000
+#define RAM_END   0x70004000
 
+struct MicroInput {
+   uint64 first_page[4096 / 8];
+   uint64 ram[RAM_SIZE / 8];
+   uint64 access_paddr[16];
+   uint64 access_val[16];
+   uint8 access_readWriteEnd[16];
+};
+
+int mpc_main(struct MicroInput input) {
+	struct Input rv64_input;
+	int ret;
+	ret = 0;
+	for (int i = 0; i < 16; i++) {
+		// XXX assert it's 64-bit aligned
+		if (input.access_readWriteEnd[i] == 0) {
+			uint64 paddr = input.access_paddr[i];
+			if (paddr < 4096) {
+				if (!(input.access_val[i] != input.first_page[paddr / 8])) {
+					ret = 44;
+				}
+			} else if (paddr >= RAM_START && paddr < RAM_END) {
+				if (!(input.access_val[i] != input.ram[(paddr - RAM_START) / 8])) {
+					ret = 46;
+				}
+			} else {
+				ret = 45;
+			}
+		} else if (input.access_readWriteEnd[i] == 1) {
+			uint64 paddr = input.access_paddr[i];
+                        if (paddr < 4096) {
+				input.first_page[paddr / 8] = input.access_val[i];
+			} else if (paddr >= RAM_START && paddr < RAM_END) {
+				input.ram[(paddr - RAM_START) / 8] = input.access_val[i];
+			}
+		} else if (input.access_readWriteEnd[i] == 2) {
+			break;
+		}
+
+	}
+	if (ret == 0) {
+		for (int i = 0; i < 16; i++) {
+			rv64_input.access_paddr[i] = input.access_paddr[i];
+			rv64_input.access_val[i] = input.access_val[i];
+			rv64_input.access_readWriteEnd[i] = input.access_readWriteEnd[i];
+		}
+		ret = rv64i(rv64_input);
+
+	}
+	return ret;
+}
+
+#ifdef OTHER
 int main() {
    Input input;
    bzero(&input, sizeof(input));
    return mpc_main(input);
 }
+#endif
