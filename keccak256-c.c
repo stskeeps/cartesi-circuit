@@ -384,3 +384,30 @@ int Keccak256_64(uint8 *input, uint8 *expected)
      
     return COMPARE_BYTES32(output, expected);  
 }
+
+int Keccak256_8(uint8 *input, uint8 *expected)
+{
+    uint8_t output[32];
+    
+    Keccak(1088, 512, input, 8, 0x01, output, 32);
+     
+    return COMPARE_BYTES32(output, expected);  
+}
+
+int Keccak256_4096(uint8 *input, uint8 *expected)
+{
+    uint8_t output[32];
+    
+    Keccak(1088, 512, input, 4096, 0x01, output, 32);
+     
+    return COMPARE_BYTES32(output, expected);  
+}
+
+int Keccak256_16384(uint8 *input, uint8 *expected)
+{
+    uint8_t output[32];
+    
+    Keccak(1088, 512, input, 16384, 0x01, output, 32);
+     
+    return COMPARE_BYTES32(output, expected);  
+}
