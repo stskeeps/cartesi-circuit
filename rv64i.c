@@ -1212,12 +1212,12 @@ int rv64i(Input input) {
 }
 
 #define RAM_SIZE 8192
-#define PAGE_SIZE 4096
+#define PAGE_SIZE 1024
 #define RAM_START 0x70000000
 #define RAM_END   0x70004000
 
 struct MicroInput {
-   uint64 first_page[4096 / 8];
+   uint64 first_page[1024 / 8];
    uint64 ram[RAM_SIZE / 8];
    uint64 access_paddr[16];
    uint64 access_val[16];
@@ -1232,7 +1232,7 @@ int mpc_main(struct MicroInput input) {
 		// XXX assert it's 64-bit aligned
 		if (input.access_readWriteEnd[i] == 0) {
 			uint64 paddr = input.access_paddr[i];
-			if (paddr < 4096) {
+			if (paddr < 1024) {
 				if (!(input.access_val[i] != input.first_page[paddr / 8])) {
 					ret = 44;
 				}
@@ -1245,7 +1245,7 @@ int mpc_main(struct MicroInput input) {
 			}
 		} else if (input.access_readWriteEnd[i] == 1) {
 			uint64 paddr = input.access_paddr[i];
-                        if (paddr < 4096) {
+                        if (paddr < 1024) {
 				input.first_page[paddr / 8] = input.access_val[i];
 			} else if (paddr >= RAM_START && paddr < RAM_END) {
 				input.ram[(paddr - RAM_START) / 8] = input.access_val[i];
