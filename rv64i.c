@@ -1185,7 +1185,7 @@ struct Input {
 
 typedef struct Input Input;
 
-int rv64i(Input input) {
+int rv64i(const Input input) {
    UarchState state;
    state.access_pointer = 0;
    state.trap = 0;
@@ -1217,11 +1217,19 @@ int rv64i(Input input) {
 #define RAM_START 0x70000000
 #define RAM_END   0x70003C00
 
-struct MicroInput {
+/* struct MicroInput {
    uint64 ram[RAM_SIZE / 8];
    uint64 access_paddr[16];
    uint64 access_val[16];
    uint8 access_readWriteEnd[16];
+}; */
+
+struct AccessAndCompare {
+   uint64 ram[RAM_SIZE / 8];
+   uint64 access_paddr[16];
+   uint64 access_val[16];
+   uint8 access_readWriteEnd[16];
+   uint64 ram_disagree[RAM_SIZE / 8];
 };
 
 struct MicroOutput {
@@ -1242,7 +1250,7 @@ struct MicroOutput {
 
 typedef uint64 StandardRAM[RAM_SIZE/8];
 
-int sanityCheck(struct Input input) {
+int sanityCheck(const struct Input input) {
     int ret = 0;
     for (int i = 0; i < 16; i++) {
          if (input.access_readWriteEnd[i] == 0) {
@@ -1257,7 +1265,7 @@ int sanityCheck(struct Input input) {
     return ret;
 }
 
-struct MicroOutput ramPlusState(struct MicroInput input) {
+struct MicroOutput ramPlusState(const struct AccessAndCompare input) {
         struct MicroOutput output;
 	uint64 ret;
 	ret = 0;
@@ -1349,18 +1357,18 @@ uint64 compareRAM(struct CompareRAMInput input) {
     return ok == 1 ? 1 : 0;
 }
 
-uint64 compareRAMDelta(struct CompareRAMInput input, struct MicroOutput delta) {
+uint64 compareRAMDelta(const struct AccessAndCompare input, const struct MicroOutput delta) {
     uint8 ok = 1;
     
     for (int i = 0; i < RAM_SIZE / 8; i += 8) {
-        uint8 a = input.ram1[i] ^ delta.delta[i] == input.ram2[i];
-        uint8 b = input.ram1[i+1] ^ delta.delta[i+1] == input.ram2[i+1];
-        uint8 c = input.ram1[i+2] ^ delta.delta[i+2] == input.ram2[i+2];
-        uint8 d = input.ram1[i+3] ^ delta.delta[i+3] == input.ram2[i+3];
-        uint8 e = input.ram1[i+4] ^ delta.delta[i+4] == input.ram2[i+4];
-        uint8 f = input.ram1[i+5] ^ delta.delta[i+5] == input.ram2[i+5];
-        uint8 g = input.ram1[i+6] ^ delta.delta[i+6] == input.ram2[i+6];
-        uint8 h = input.ram1[i+7] ^ delta.delta[i+7] == input.ram2[i+7];
+        uint8 a = input.ram[i] ^ delta.delta[i] == input.ram_disagree[i];
+        uint8 b = input.ram[i+1] ^ delta.delta[i+1] == input.ram_disagree[i+1];
+        uint8 c = input.ram[i+2] ^ delta.delta[i+2] == input.ram_disagree[i+2];
+        uint8 d = input.ram[i+3] ^ delta.delta[i+3] == input.ram_disagree[i+3];
+        uint8 e = input.ram[i+4] ^ delta.delta[i+4] == input.ram_disagree[i+4];
+        uint8 f = input.ram[i+5] ^ delta.delta[i+5] == input.ram_disagree[i+5];
+        uint8 g = input.ram[i+6] ^ delta.delta[i+6] == input.ram_disagree[i+6];
+        uint8 h = input.ram[i+7] ^ delta.delta[i+7] == input.ram_disagree[i+7];
         
         ok = ok && a && b && c && d;
     }
@@ -1368,30 +1376,12 @@ uint64 compareRAMDelta(struct CompareRAMInput input, struct MicroOutput delta) {
 }
 
 
-struct AccessAndCompare {
-   uint64 ram[RAM_SIZE / 8];
-   uint64 access_paddr[16];
-   uint64 access_val[16];
-   uint8 access_readWriteEnd[16];
-   uint64 ram_disagree[RAM_SIZE / 8];
-};
 
-int access_and_compare(struct AccessAndCompare input) {
-        struct MicroInput micro_input;
-	COPY_RAM(input.ram, micro_input.ram);
-
-	for (int i = 0; i < 16; i++) {
-		micro_input.access_paddr[i] = input.access_paddr[i];
-		micro_input.access_val[i] = input.access_val[i];
-		micro_input.access_readWriteEnd[i] = input.access_readWriteEnd[i];
-	}
-	struct MicroOutput micro_output = ramPlusState(micro_input);
+int access_and_compare(const struct AccessAndCompare input) {
+	struct MicroOutput micro_output = ramPlusState(input);
 	uint64 compare_result = 0;
 	if (micro_output.ret == 0) {
-	  struct CompareRAMInput compare_input;
-	  COPY_RAM(input.ram_disagree, compare_input.ram1);
-	  COPY_RAM(input.ram, compare_input.ram2);
-	  compare_result = compareRAMDelta(compare_input, micro_output);
+	  compare_result = compareRAMDelta(input, micro_output);
           return compare_result;
         } else {
           return 0;
@@ -1405,12 +1395,13 @@ int access_and_compare(struct AccessAndCompare input) {
 
 struct BisectInput
 {
-   StandardRAM prover_bisection_RAM[BISECTION_STEPS + 1];
-      
+//   StandardRAM prover_bisection_RAM[BISECTION_STEPS + 1];
+   StandardRAM before;
+   StandardRAM after;      
    uint64 prover_access_paddr[16];
    uint64 prover_access_val[16];
    uint8 prover_access_readWriteEnd[16];
-   uint8 verifier_bisections[BISECTION_STEPS];
+//   uint8 verifier_bisections[BISECTION_STEPS];
 };
 
 
@@ -1418,18 +1409,20 @@ int run_step(struct BisectInput input, int agree, int disagree) {
         struct AccessAndCompare micro_input;
         struct Input rv64_input;
 
-	COPY_RAM(input.prover_bisection_RAM[agree], micro_input.ram);
-	COPY_RAM(input.prover_bisection_RAM[disagree], micro_input.ram_disagree);
 
+/*	COPY_RAM(input.prover_bisection_RAM[agree], micro_input.ram);
+	COPY_RAM(input.prover_bisection_RAM[disagree], micro_input.ram_disagree); */
+        COPY_RAM(input.before, micro_input.ram);
+        COPY_RAM(input.after, micro_input.ram_disagree);
 	for (int i = 0; i < 16; i++) {
 		micro_input.access_paddr[i] = rv64_input.access_paddr[i] = input.prover_access_paddr[i];
-		micro_input.access_val[i] = rv64_input.access_val[i] = input.prover_access_val[i];
+		micro_input.access_val[i] =  rv64_input.access_val[i] = input.prover_access_val[i];
 		micro_input.access_readWriteEnd[i] = rv64_input.access_readWriteEnd[i] = input.prover_access_readWriteEnd[i];
 	}
 	uint64 compare_result = access_and_compare(micro_input);
         uint64 sanity_check = sanityCheck(rv64_input);
         uint64 rv64i_result = rv64i(rv64_input);
-
+        
         return compare_result == 1 && sanity_check == 0 && rv64i_result == 0 ? 0 : 1;
 }
 
