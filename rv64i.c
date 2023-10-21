@@ -18,6 +18,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <assert.h>
+#include <stdbool.h>
+#include <string.h>
 
 typedef int8_t int8;
 typedef uint8_t uint8;
@@ -27,7 +29,6 @@ typedef int32_t int32;
 typedef uint32_t uint32;
 typedef int64_t int64;
 typedef uint64_t uint64;
-typedef uint8_t bool;
 
 #define UCYCLE 0x320
 #define UHALT 0x328
@@ -1214,57 +1215,258 @@ int rv64i(Input input) {
 #define RAM_SIZE 8192
 #define PAGE_SIZE 1024
 #define RAM_START 0x70000000
-#define RAM_END   0x70004000
+#define RAM_END   0x70003C00
 
 struct MicroInput {
-   uint64 first_page[1024 / 8];
    uint64 ram[RAM_SIZE / 8];
    uint64 access_paddr[16];
    uint64 access_val[16];
    uint8 access_readWriteEnd[16];
 };
 
-int mpc_main(struct MicroInput input) {
-	struct Input rv64_input;
-	int ret;
+struct MicroOutput {
+   uint64 delta[RAM_SIZE / 8];
+   uint64 ret;
+};
+
+#define COPY_RAM(src, dst)  do { for (int i = 0; i < RAM_SIZE / 8; i += 8) { \
+          dst[i] = src[i]; \
+          dst[i+1] = src[i+1]; \
+          dst[i+2] = src[i+2]; \
+          dst[i+3] = src[i+3]; \
+          dst[i+4] = src[i+4]; \
+          dst[i+5] = src[i+5]; \
+          dst[i+6] = src[i+6]; \
+          dst[i+7] = src[i+7]; } \
+        } while (0)
+
+typedef uint64 StandardRAM[RAM_SIZE/8];
+
+int sanityCheck(struct Input input) {
+    int ret = 0;
+    for (int i = 0; i < 16; i++) {
+         if (input.access_readWriteEnd[i] == 0) {
+               // to save circuit space we don't allow reads of previously written during step
+               for (int j = 0; j < i; j++) {
+                   if (input.access_paddr[j] == input.access_paddr[i] && input.access_readWriteEnd[j] == 1) {
+                      ret = 1;
+                   }
+               }
+         }
+    }
+    return ret;
+}
+
+struct MicroOutput ramPlusState(struct MicroInput input) {
+        struct MicroOutput output;
+	uint64 ret;
 	ret = 0;
+
+        for (int j = 0; j < RAM_SIZE / 8; j++) {
+            output.delta[j] = 0;
+        }
+        
 	for (int i = 0; i < 16; i++) {
-		// XXX assert it's 64-bit aligned
-		if (input.access_readWriteEnd[i] == 0) {
-			uint64 paddr = input.access_paddr[i];
-			if (paddr < 1024) {
-				if (!(input.access_val[i] != input.first_page[paddr / 8])) {
-					ret = 44;
-				}
-			} else if (paddr >= RAM_START && paddr < RAM_END) {
-				if (!(input.access_val[i] != input.ram[(paddr - RAM_START) / 8])) {
-					ret = 46;
-				}
-			} else {
-				ret = 45;
-			}
-		} else if (input.access_readWriteEnd[i] == 1) {
-			uint64 paddr = input.access_paddr[i];
-                        if (paddr < 1024) {
-				input.first_page[paddr / 8] = input.access_val[i];
-			} else if (paddr >= RAM_START && paddr < RAM_END) {
-				input.ram[(paddr - RAM_START) / 8] = input.access_val[i];
-			}
-		} else if (input.access_readWriteEnd[i] == 2) {
-			break;
-		}
+	        if (input.access_readWriteEnd[i] == 0) {
+  	          uint64 off = input.access_paddr[i];
+	          if (off >= RAM_START && off < RAM_END) {
+	            off -= RAM_START;
+	            off += PAGE_SIZE;
+	          }
+	          off /= 8;
+                  if (input.access_val[i] != input.ram[off]) {
+                     ret = 432;
+                  }
+	        } else if (input.access_readWriteEnd[i] == 1) {
+  	          uint64 off = input.access_paddr[i];
+	          if (off >= RAM_START && off < RAM_END) {
+	            off -= RAM_START;
+	            off += PAGE_SIZE;
+	          }
+	          off /= 8;
+	          output.delta[off] = input.ram[off] ^ input.access_val[i];
+                }
+        }
+       	output.ret = ret;
+	return output;
+}
 
-	}
-	if (ret == 0) {
-		for (int i = 0; i < 16; i++) {
-			rv64_input.access_paddr[i] = input.access_paddr[i];
-			rv64_input.access_val[i] = input.access_val[i];
-			rv64_input.access_readWriteEnd[i] = input.access_readWriteEnd[i];
-		}
-		ret = rv64i(rv64_input);
 
+struct CompareRAMInput {
+    StandardRAM ram1;
+    StandardRAM ram2;
+};
+
+#define COMPARE_BYTES32(a, b) \
+     a[0] == b[0] && \
+     a[1] == b[1] && \
+     a[2] == b[2] && \
+     a[3] == b[3] && \
+     a[4] == b[4] && \
+     a[5] == b[5] && \
+     a[6] == b[6] && \
+     a[7] == b[7] && \
+     a[8] == b[8] && \
+     a[9] == b[9] && \
+     a[10] == b[10] && \
+     a[11] == b[11] && \
+     a[12] == b[12] && \
+     a[13] == b[13] && \
+     a[14] == b[14] && \
+     a[15] == b[15] && \
+     a[16] == b[16] && \
+     a[17] == b[17] && \
+     a[18] == b[18] && \
+     a[19] == b[19] && \
+     a[20] == b[20] && \
+     a[21] == b[21] && \
+     a[22] == b[22] && \
+     a[23] == b[23] && \
+     a[24] == b[24] && \
+     a[25] == b[25] && \
+     a[26] == b[26] && \
+     a[27] == b[27] && \
+     a[28] == b[28] && \
+     a[29] == b[29] && \
+     a[30] == b[30] && \
+     a[31] == b[31]
+    
+uint64 compareRAM(struct CompareRAMInput input) {
+    uint8 ok = 1;
+    
+    for (int i = 0; i < RAM_SIZE / 8; i += 8) {
+        uint8 a = input.ram1[i] == input.ram2[i];
+        uint8 b = input.ram1[i+1] == input.ram2[i+1];
+        uint8 c = input.ram1[i+2] == input.ram2[i+2];
+        uint8 d = input.ram1[i+3] == input.ram2[i+3];
+        uint8 e = input.ram1[i+4] == input.ram2[i+4];
+        uint8 f = input.ram1[i+5] == input.ram2[i+5];
+        uint8 g = input.ram1[i+6] == input.ram2[i+6];
+        uint8 h = input.ram1[i+7] == input.ram2[i+7];
+        
+        ok = ok && a && b && c && d;
+    }
+    return ok == 1 ? 1 : 0;
+}
+
+uint64 compareRAMDelta(struct CompareRAMInput input, struct MicroOutput delta) {
+    uint8 ok = 1;
+    
+    for (int i = 0; i < RAM_SIZE / 8; i += 8) {
+        uint8 a = input.ram1[i] ^ delta.delta[i] == input.ram2[i];
+        uint8 b = input.ram1[i+1] ^ delta.delta[i+1] == input.ram2[i+1];
+        uint8 c = input.ram1[i+2] ^ delta.delta[i+2] == input.ram2[i+2];
+        uint8 d = input.ram1[i+3] ^ delta.delta[i+3] == input.ram2[i+3];
+        uint8 e = input.ram1[i+4] ^ delta.delta[i+4] == input.ram2[i+4];
+        uint8 f = input.ram1[i+5] ^ delta.delta[i+5] == input.ram2[i+5];
+        uint8 g = input.ram1[i+6] ^ delta.delta[i+6] == input.ram2[i+6];
+        uint8 h = input.ram1[i+7] ^ delta.delta[i+7] == input.ram2[i+7];
+        
+        ok = ok && a && b && c && d;
+    }
+    return ok == 1 ? 1 : 0;
+}
+
+
+struct AccessAndCompare {
+   uint64 ram[RAM_SIZE / 8];
+   uint64 access_paddr[16];
+   uint64 access_val[16];
+   uint8 access_readWriteEnd[16];
+   uint64 ram_disagree[RAM_SIZE / 8];
+};
+
+int access_and_compare(struct AccessAndCompare input) {
+        struct MicroInput micro_input;
+	COPY_RAM(input.ram, micro_input.ram);
+
+	for (int i = 0; i < 16; i++) {
+		micro_input.access_paddr[i] = input.access_paddr[i];
+		micro_input.access_val[i] = input.access_val[i];
+		micro_input.access_readWriteEnd[i] = input.access_readWriteEnd[i];
 	}
-	return ret;
+	struct MicroOutput micro_output = ramPlusState(micro_input);
+	uint64 compare_result = 0;
+	if (micro_output.ret == 0) {
+	  struct CompareRAMInput compare_input;
+	  COPY_RAM(input.ram_disagree, compare_input.ram1);
+	  COPY_RAM(input.ram, compare_input.ram2);
+	  compare_result = compareRAMDelta(compare_input, micro_output);
+          return compare_result;
+        } else {
+          return 0;
+        }
+}
+
+
+// has to match
+#define MAX_CYCLE 1024*1024*1024
+#define BISECTION_STEPS 30
+
+struct BisectInput
+{
+   StandardRAM prover_bisection_RAM[BISECTION_STEPS + 1];
+      
+   uint64 prover_access_paddr[16];
+   uint64 prover_access_val[16];
+   uint8 prover_access_readWriteEnd[16];
+   uint8 verifier_bisections[BISECTION_STEPS];
+};
+
+
+int run_step(struct BisectInput input, int agree, int disagree) {
+        struct AccessAndCompare micro_input;
+        struct Input rv64_input;
+
+	COPY_RAM(input.prover_bisection_RAM[agree], micro_input.ram);
+	COPY_RAM(input.prover_bisection_RAM[disagree], micro_input.ram_disagree);
+
+	for (int i = 0; i < 16; i++) {
+		micro_input.access_paddr[i] = rv64_input.access_paddr[i] = input.prover_access_paddr[i];
+		micro_input.access_val[i] = rv64_input.access_val[i] = input.prover_access_val[i];
+		micro_input.access_readWriteEnd[i] = rv64_input.access_readWriteEnd[i] = input.prover_access_readWriteEnd[i];
+	}
+	uint64 compare_result = access_and_compare(micro_input);
+        uint64 sanity_check = sanityCheck(rv64_input);
+        uint64 rv64i_result = rv64i(rv64_input);
+
+        return compare_result == 1 && sanity_check == 0 && rv64i_result == 0 ? 0 : 1;
+}
+
+int mpc_main(struct BisectInput input) {
+/*	int left = 0;
+	int right = MAX_CYCLE;
+	int lastAgree = 0;
+	int lastDisagree = MAX_CYCLE;
+	int prover_bisection_cycle[BISECTION_STEPS + 1];
+	prover_bisection_cycle[0] = 0;
+
+	int bisect_step = 0;
+
+	for (int i = 0; i < BISECTION_STEPS; i++) {
+		int mid = (left + right) / 2;
+		prover_bisection_cycle[bisect_step + 1] = mid;
+		if (input.verifier_bisections[bisect_step] == 1) {
+			lastAgree = mid;
+			left = mid + 1;
+		} else {
+			lastDisagree = mid;
+			right = mid - 1;
+		}
+		bisect_step++;
+	}  
+	int agree_ram = 0, disagree_ram = 0;
+	for (int i = 0; i < BISECTION_STEPS + 1; i++) {
+		if (prover_bisection_cycle[i] == lastAgree) {
+			agree_ram = i;
+		}
+	}
+	for (int i = 0; i < BISECTION_STEPS + 1; i++) {
+		if (prover_bisection_cycle[i] == lastDisagree) {
+			disagree_ram = i;
+		}
+	} */
+        return run_step(input, 0, 1);
 }
 
 #ifdef OTHER
