@@ -1224,12 +1224,27 @@ int rv64i(const Input input) {
    uint8 access_readWriteEnd[16];
 }; */
 
-struct AccessAndCompare {
+/* struct AccessAndCompare {
    uint64 ram[RAM_SIZE / 8];
    uint64 access_paddr[16];
    uint64 access_val[16];
    uint8 access_readWriteEnd[16];
    uint64 ram_disagree[RAM_SIZE / 8];
+}; */
+// has to match
+#define MAX_CYCLE 1024*1024*1024
+#define BISECTION_STEPS 30
+typedef uint64 StandardRAM[RAM_SIZE/8];
+
+struct BisectInput
+{
+   StandardRAM ram;
+   StandardRAM ram_disagree;
+   StandardRAM prover_bisection_RAM[BISECTION_STEPS + 1];
+   uint64 access_paddr[16];
+   uint64 access_val[16];
+   uint8 access_readWriteEnd[16];
+   uint8 verifier_bisections[BISECTION_STEPS];
 };
 
 struct MicroOutput {
@@ -1248,7 +1263,6 @@ struct MicroOutput {
           dst[i+7] = src[i+7]; } \
         } while (0)
 
-typedef uint64 StandardRAM[RAM_SIZE/8];
 
 int sanityCheck(const struct Input input) {
     int ret = 0;
@@ -1265,7 +1279,7 @@ int sanityCheck(const struct Input input) {
     return ret;
 }
 
-struct MicroOutput ramPlusState(const struct AccessAndCompare input) {
+struct MicroOutput ramPlusState(const struct BisectInput input) {
         struct MicroOutput output;
 	uint64 ret;
 	ret = 0;
@@ -1357,7 +1371,43 @@ uint64 compareRAM(struct CompareRAMInput input) {
     return ok == 1 ? 1 : 0;
 }
 
-uint64 compareRAMDelta(const struct AccessAndCompare input, const struct MicroOutput delta) {
+uint64 compareRAM_agree_bisect(const struct BisectInput input, int agree) {
+    uint8 ok = 1;
+    
+    for (int i = 0; i < RAM_SIZE / 8; i += 8) {
+        uint8 a = input.ram[i] == input.prover_bisection_RAM[agree][i];
+        uint8 b = input.ram[i+1] == input.prover_bisection_RAM[agree][i+1];
+        uint8 c = input.ram[i+2] == input.prover_bisection_RAM[agree][i+2];
+        uint8 d = input.ram[i+3] == input.prover_bisection_RAM[agree][i+3];
+        uint8 e = input.ram[i+4] == input.prover_bisection_RAM[agree][i+4];
+        uint8 f = input.ram[i+5] == input.prover_bisection_RAM[agree][i+5];
+        uint8 g = input.ram[i+6] == input.prover_bisection_RAM[agree][i+6];
+        uint8 h = input.ram[i+7] == input.prover_bisection_RAM[agree][i+7];
+        
+        ok = ok && a && b && c && d;
+    }
+    return ok == 1 ? 1 : 0;
+}
+
+uint64 compareRAM_disagree_bisect(const struct BisectInput input, int agree) {
+    uint8 ok = 1;
+    
+    for (int i = 0; i < RAM_SIZE / 8; i += 8) {
+        uint8 a = input.ram_disagree[i] == input.prover_bisection_RAM[agree][i];
+        uint8 b = input.ram_disagree[i+1] == input.prover_bisection_RAM[agree][i+1];
+        uint8 c = input.ram_disagree[i+2] == input.prover_bisection_RAM[agree][i+2];
+        uint8 d = input.ram_disagree[i+3] == input.prover_bisection_RAM[agree][i+3];
+        uint8 e = input.ram_disagree[i+4] == input.prover_bisection_RAM[agree][i+4];
+        uint8 f = input.ram_disagree[i+5] == input.prover_bisection_RAM[agree][i+5];
+        uint8 g = input.ram_disagree[i+6] == input.prover_bisection_RAM[agree][i+6];
+        uint8 h = input.ram_disagree[i+7] == input.prover_bisection_RAM[agree][i+7];
+        
+        ok = ok && a && b && c && d;
+    }
+    return ok == 1 ? 1 : 0;
+}
+
+uint64 compareRAMDelta(const struct BisectInput input, const struct MicroOutput delta) {
     uint8 ok = 1;
     
     for (int i = 0; i < RAM_SIZE / 8; i += 8) {
@@ -1377,7 +1427,7 @@ uint64 compareRAMDelta(const struct AccessAndCompare input, const struct MicroOu
 
 
 
-int access_and_compare(const struct AccessAndCompare input) {
+int access_and_compare(const struct BisectInput input) {
 	struct MicroOutput micro_output = ramPlusState(input);
 	uint64 compare_result = 0;
 	if (micro_output.ret == 0) {
@@ -1389,37 +1439,16 @@ int access_and_compare(const struct AccessAndCompare input) {
 }
 
 
-// has to match
-#define MAX_CYCLE 1024*1024*1024
-#define BISECTION_STEPS 30
-
-struct BisectInput
-{
-//   StandardRAM prover_bisection_RAM[BISECTION_STEPS + 1];
-   StandardRAM before;
-   StandardRAM after;      
-   uint64 prover_access_paddr[16];
-   uint64 prover_access_val[16];
-   uint8 prover_access_readWriteEnd[16];
-//   uint8 verifier_bisections[BISECTION_STEPS];
-};
 
 
-int run_step(struct BisectInput input, int agree, int disagree) {
-        struct AccessAndCompare micro_input;
+int run_step(struct BisectInput input) {
         struct Input rv64_input;
-
-
-/*	COPY_RAM(input.prover_bisection_RAM[agree], micro_input.ram);
-	COPY_RAM(input.prover_bisection_RAM[disagree], micro_input.ram_disagree); */
-        COPY_RAM(input.before, micro_input.ram);
-        COPY_RAM(input.after, micro_input.ram_disagree);
 	for (int i = 0; i < 16; i++) {
-		micro_input.access_paddr[i] = rv64_input.access_paddr[i] = input.prover_access_paddr[i];
-		micro_input.access_val[i] =  rv64_input.access_val[i] = input.prover_access_val[i];
-		micro_input.access_readWriteEnd[i] = rv64_input.access_readWriteEnd[i] = input.prover_access_readWriteEnd[i];
-	}
-	uint64 compare_result = access_and_compare(micro_input);
+		/* micro_input.access_paddr[i] = */ rv64_input.access_paddr[i] = input.access_paddr[i];
+		/* micro_input.access_val[i] = */ rv64_input.access_val[i] = input.access_val[i];
+		/* micro_input.access_readWriteEnd[i] =  */  rv64_input.access_readWriteEnd[i] = input.access_readWriteEnd[i];
+	} 
+	uint64 compare_result = access_and_compare(input);
         uint64 sanity_check = sanityCheck(rv64_input);
         uint64 rv64i_result = rv64i(rv64_input);
         
@@ -1427,7 +1456,7 @@ int run_step(struct BisectInput input, int agree, int disagree) {
 }
 
 int mpc_main(struct BisectInput input) {
-/*	int left = 0;
+	int left = 0;
 	int right = MAX_CYCLE;
 	int lastAgree = 0;
 	int lastDisagree = MAX_CYCLE;
@@ -1458,8 +1487,11 @@ int mpc_main(struct BisectInput input) {
 		if (prover_bisection_cycle[i] == lastDisagree) {
 			disagree_ram = i;
 		}
-	} */
-        return run_step(input, 0, 1);
+	}
+	
+        int ret = compareRAM_agree_bisect(input, agree_ram) == 1 && compareRAM_disagree_bisect(input, disagree_ram);
+	
+        return ret && run_step(input);
 }
 
 #ifdef OTHER
